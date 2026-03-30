@@ -26,7 +26,7 @@ func NewHub() *Hub {
 }
 
 func (h *Hub) handleForward(c *Client, env *Envelope) {
-	h.Mu.RLock() // RLock since we aren't modifying room state, just reading it
+	h.Mu.RLock()
 	defer h.Mu.RUnlock()
 
 	room, exists := h.Rooms[env.Room]
@@ -35,7 +35,6 @@ func (h *Hub) handleForward(c *Client, env *Envelope) {
 		return
 	}
 
-	// Find the peer (the client in the room that is NOT the sender)
 	var peer *Client
 	for client := range room.Clients {
 		if client != c {
@@ -49,7 +48,6 @@ func (h *Hub) handleForward(c *Client, env *Envelope) {
 		return
 	}
 
-	// Strip the token before forwarding so it doesn't leak unnecessarily
 	env.Token = ""
 	b, _ := json.Marshal(env)
 
@@ -88,7 +86,6 @@ func (h *Hub) RouteMessage(c *Client, rawMessage []byte) {
 	}
 }
 
-// sendError is a helper to push an error back to the sending client
 func (h *Hub) sendError(c *Client, errMsg string) {
 	errPayload, _ := json.Marshal(map[string]string{"message": errMsg})
 	env := Envelope{
@@ -111,9 +108,8 @@ func (h *Hub) handleJoin(c *Client, env *Envelope) {
 	defer h.Mu.Unlock()
 
 	room, exists := h.Rooms[env.Room]
-
+	var created bool
 	if !exists {
-		// Room doesn't exist: Create it
 		token, err := generateToken()
 		if err != nil {
 			h.sendError(c, "internal server error: couldn't generate token")
@@ -126,18 +122,25 @@ func (h *Hub) handleJoin(c *Client, env *Envelope) {
 		}
 
 		h.Rooms[env.Room] = room
-
-		// Return the token to the creator so they can share it
-		respPayload, _ := json.Marshal(map[string]string{"token": token})
-		respEnvelope := Envelope{Version: 1, Type: TypeJoin, Room: env.Room, Payload: json.RawMessage(respPayload)}
-		b, _ := json.Marshal(respEnvelope)
-		c.Send <- b
+		created = true
 	} else {
 		// Room exists: Authenticate
 		if subtle.ConstantTimeCompare([]byte(env.Token), []byte(room.Token)) != 1 {
 			h.sendError(c, "invalid token")
 			return
 		}
+	}
+
+	// Check if client is ALREADY in the room
+	if _, ok := room.Clients[c]; ok {
+		// Resend confirmation and return
+		respEnvelope := Envelope{Version: 1, Type: TypeJoin, Room: env.Room}
+		b, _ := json.Marshal(respEnvelope)
+		select {
+		case c.Send <- b:
+		default:
+		}
+		return
 	}
 
 	// Check capacity
@@ -148,6 +151,25 @@ func (h *Hub) handleJoin(c *Client, env *Envelope) {
 
 	// Register client
 	room.Clients[c] = struct{}{}
+
+	// Send confirmation of successful join
+	if created {
+		// Return the token to the creator so they can share it
+		respPayload, _ := json.Marshal(map[string]string{"token": room.Token})
+		respEnvelope := Envelope{Version: 1, Type: TypeJoin, Room: env.Room, Payload: json.RawMessage(respPayload)}
+		b, _ := json.Marshal(respEnvelope)
+		select {
+		case c.Send <- b:
+		default:
+		}
+	} else {
+		respEnvelope := Envelope{Version: 1, Type: TypeJoin, Room: env.Room}
+		b, _ := json.Marshal(respEnvelope)
+		select {
+		case c.Send <- b:
+		default:
+		}
+	}
 }
 
 func (h *Hub) RemoveClient(c *Client) {

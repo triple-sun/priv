@@ -24,7 +24,7 @@ function App() {
     setStatus("connecting");
 
     const wsUrl = `ws://${address}:${port}/ws`;
-    
+
     signalingService.connect(wsUrl);
     setStatus("connected");
 
@@ -63,7 +63,7 @@ function App() {
     endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = (e: React.SubmitEvent) => {
     e.preventDefault();
     if (!roomId.trim()) return;
 
@@ -84,7 +84,7 @@ function App() {
     }, 500);
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = (e: React.SubmitEvent) => {
     e.preventDefault();
     if (!outgoingMsg.trim() || !inRoom) return;
 

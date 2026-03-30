@@ -104,7 +104,17 @@ func TestHub_MessageForwarding(t *testing.T) {
 		t.Fatalf("Client 2 failed to write JSON: %v", err)
 	}
 
-	// Wait briefly for Client 2 to be registered in the Hub
+	// 2.5 Wait for Join confirmation for Client 2
+	var joinResp2 Envelope
+	err = conn2.ReadJSON(&joinResp2)
+	if err != nil {
+		t.Fatalf("Client 2 failed to read Join confirmation: %v", err)
+	}
+	if joinResp2.Type != TypeJoin {
+		t.Fatalf("Expected Client 2 to receive Join confirmation, got %s", joinResp2.Type)
+	}
+
+	// Wait briefly for Client 2 to be fully registered
 	time.Sleep(100 * time.Millisecond)
 
 	// 3. Client 1 sends an offer

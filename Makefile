@@ -3,6 +3,9 @@
 dev-app:
 	pnpm run tauri dev
 
+dev-app-2:
+	npm run tauri dev --config '{"build": { "devPath": "http://localhost:1421"}}'
+
 dev-server:
 	cd server && go run main.go
 
