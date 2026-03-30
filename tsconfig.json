@@ -20,6 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "lint-staged.config.js"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

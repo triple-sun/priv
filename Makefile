@@ -10,7 +10,7 @@ dev-server:
 	cd server && go run main.go
 
 lint-app:
-	pnpm run lint
+	pnpm run check
 	cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 lint-server:

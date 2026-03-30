@@ -72,7 +72,7 @@ func TestHub_JoinCreatesRoomAndReturnsToken(t *testing.T) {
 
 	// Extract the generated token
 	var payload map[string]string
-	json.Unmarshal(response.Payload, &payload)
+	_ = json.Unmarshal(response.Payload, &payload)
 	if payload["token"] == "" {
 		t.Error("Expected a token in the payload, got none")
 	}
@@ -86,13 +86,13 @@ func TestHub_MessageForwarding(t *testing.T) {
 	conn1 := connectClient(t, wsURL)
 	defer conn1.Close()
 
-	conn1.WriteJSON(Envelope{Version: 1, Type: TypeJoin, Room: "test-room"})
+	_ = conn1.WriteJSON(Envelope{Version: 1, Type: TypeJoin, Room: "test-room"})
 	
 	var joinResp Envelope
-	conn1.ReadJSON(&joinResp)
+	_ = conn1.ReadJSON(&joinResp)
 	
 	var payload map[string]string
-	json.Unmarshal(joinResp.Payload, &payload)
+	_ = json.Unmarshal(joinResp.Payload, &payload)
 	token := payload["token"]
 
 	// 2. Second client joins with the token

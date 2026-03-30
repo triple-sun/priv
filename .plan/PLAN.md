@@ -119,6 +119,7 @@ priv_chat/
 **Goal:** Establish a working peer-to-peer video call using the browser's `RTCPeerConnection` API, routed through the signaling server for SDP/ICE exchange. No custom E2E encryption yet.
 
 ### Learning Objectives
+
 - Understand the WebRTC offer/answer model: what SDP encodes and why the ordering (`setLocalDescription` → signal → `setRemoteDescription`) is strict
 - Understand ICE and why trickle ICE speeds up connection time
 - Know when STUN is sufficient vs. when TURN is required (symmetric NAT, corporate firewalls)
@@ -126,6 +127,7 @@ priv_chat/
 - Handle `getUserMedia` permission flows and stream lifecycle
 
 ### Key Concepts
+
 - **SDP (Session Description Protocol)**: a text blob describing codecs, IP addresses, and ports — not a streaming format, a negotiation format
 - **Trickle ICE**: candidates are sent as they're gathered, not all at once — reduces connection setup time
 - **STUN vs. TURN**: STUN reveals your public IP; TURN relays media when P2P is impossible (~10–15% of real-world connections)

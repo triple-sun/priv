@@ -1,0 +1,6 @@
+npx lint-staged --allow-empty
+npm run test:frontend
+
+make lint-app
+make lint-server
+make test-server

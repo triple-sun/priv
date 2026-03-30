@@ -26,9 +26,9 @@ func (c *Client) ReadPump(hub *Hub) {
 	}()
 
 	// Configure the heartbeat deadlines
-	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.Conn.SetPongHandler(func(string) error {
-		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
@@ -56,7 +56,7 @@ func (c *Client) WritePump() {
         select {
         case message, ok := <-c.Send:
             if !ok {
-                c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+                _ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
                 return
             }
 
