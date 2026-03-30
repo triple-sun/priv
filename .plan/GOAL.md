@@ -1,0 +1,2 @@
+# Goal Description
+The objective is to build a privacy-focused, cross-platform desktop video chat application. The app uses standard WebRTC for media transport, layered with custom end-to-end frame encryption (key derivation in Rust via X25519/HKDF, per-frame AES-GCM encryption in JS via SubtleCrypto) and native OS-level APIs to deter screen capturing. This approach prioritizes control over the security and media pipeline without reimplementing the networking stack itself.

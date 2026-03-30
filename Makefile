@@ -1,4 +1,4 @@
-.PHONY: dev-app dev-server lint-app lint-server
+.PHONY: dev-app dev-server lint-app lint-server test-server
 
 dev-app:
 	pnpm run tauri dev
@@ -11,4 +11,7 @@ lint-app:
 	cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 lint-server:
-	cd server && go vet ./...
+	cd server && golangci-lint run ./...
+
+test-server:
+	cd server && go test -race ./...

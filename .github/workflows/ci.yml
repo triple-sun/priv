@@ -65,4 +65,4 @@ jobs:
         working-directory: ./server
         run: |
           go vet ./...
-          go build -v -o privchat-signal
+          go build -v -o merhaba-signal
