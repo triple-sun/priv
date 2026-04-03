@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-fulltext-terminal.svg" width="400" alt="PrivChat Logo">
+  <img src="assets/logo-fulltext-terminal.png" width="400" alt="PrivChat Logo">
 </p>
 
 # PrivChat
