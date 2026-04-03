@@ -19,7 +19,7 @@
   <rect x="0" y="0" width="200" height="200" rx="50" fill="url(#bgGradient)"/>
 
   <text x="105"
-    y="90 "
+    y="89"
     dominant-baseline="central"
     text-anchor="middle"
     font-family="'Roboto', serif"

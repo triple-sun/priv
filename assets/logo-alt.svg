@@ -23,7 +23,7 @@
   <!-- White > priv))) text, bottom-left offset -->
   <text
     x="100"
-    y="170"
+    y="290"
     text-anchor="middle"
     font-family="'Roboto', sans-serif"
     font-weight="700"
