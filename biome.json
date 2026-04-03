@@ -30,6 +30,7 @@
   },
   "json": {
     "formatter": {
+      "enabled": true,
       "trailingCommas": "none"
     }
   },

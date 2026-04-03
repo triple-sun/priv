@@ -146,6 +146,7 @@ const ICE_SERVERS = [
 export class WebRTCService {
   private pc: RTCPeerConnection | null = null;
   private localStream: MediaStream | null = null;
+  private pendingCandidates: RTCIceCandidateInit[] = [];
   public onRemoteStream: ((stream: MediaStream) => void) | null = null;
   public onConnectionStateChange: ((state: RTCPeerConnectionState) => void) | null = null;
 
@@ -186,6 +187,14 @@ export class WebRTCService {
     return pc;
   }
 
+  /** Flush any ICE candidates that arrived before setRemoteDescription */
+  private async flushPendingCandidates(): Promise<void> {
+    for (const candidate of this.pendingCandidates) {
+      await this.pc?.addIceCandidate(candidate);
+    }
+    this.pendingCandidates = [];
+  }
+
   /** Caller side: create and send an offer */
   public async createOffer(): Promise<void> {
     this.pc = this.createPeerConnection();
@@ -198,6 +207,7 @@ export class WebRTCService {
   public async handleOffer(sdp: string, type: RTCSdpType): Promise<void> {
     this.pc = this.createPeerConnection();
     await this.pc.setRemoteDescription({ sdp, type });
+    await this.flushPendingCandidates();
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
     signalingService.send("answer", { sdp: answer.sdp, type: answer.type });
@@ -206,11 +216,17 @@ export class WebRTCService {
   /** Both sides: apply the answer when received */
   public async handleAnswer(sdp: string, type: RTCSdpType): Promise<void> {
     await this.pc?.setRemoteDescription({ sdp, type });
+    await this.flushPendingCandidates();
   }
 
-  /** Both sides: apply ICE candidates as they arrive */
+  /** Both sides: apply ICE candidates as they arrive, queuing if remote description isn't set yet */
   public async handleIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    await this.pc?.addIceCandidate(candidate);
+    if (!this.pc?.remoteDescription) {
+      // Remote description not yet set — queue for later
+      this.pendingCandidates.push(candidate);
+      return;
+    }
+    await this.pc.addIceCandidate(candidate);
   }
 
   /** Hang up and clean up */
@@ -219,6 +235,7 @@ export class WebRTCService {
     this.pc?.close();
     this.pc = null;
     this.localStream = null;
+    this.pendingCandidates = [];
     signalingService.send("leave", {});
   }
 }
@@ -270,7 +287,7 @@ const unsubscribe = signalingService.onMessage(async (env: Envelope) => {
 >
 > ICE candidates can arrive via signaling *before* `setRemoteDescription` is called (because the remote peer started gathering immediately when they set their local description). If you call `addIceCandidate` before `setRemoteDescription`, the browser throws "Cannot add ICE candidate without an established remote description".
 >
-> **Solution**: Queue incoming ICE candidates and apply them only after `setRemoteDescription` has been called. For Phase 3, the timing usually works out — but be aware this is a real race condition. The robust solution (queuing) is worth implementing if you see sporadic ICE failures.
+> **Solution**: The `WebRTCService` code in Step 2.1 handles this with the `pendingCandidates` array — `handleIceCandidate` queues candidates when `pc.remoteDescription` is null, and `handleOffer`/`handleAnswer` flush the queue immediately after `setRemoteDescription`. This is not optional — the race *will* occur on real networks.
 
 > [!TIP]
 > **🔗 Phase 2 → Phase 3 Bridge: The Same Race Condition, Different Language**
@@ -283,12 +300,58 @@ const unsubscribe = signalingService.onMessage(async (env: Envelope) => {
 
 ---
 
-## Step 3 — Remote Stream Rendering
+## Step 3 — Call Flow & Remote Stream Rendering
 
-Display the peer video alongside your local preview:
+This step wires everything together: local stream → `WebRTCService` → call initiation → remote stream display. It mirrors the role of Phase 2, Step 5 — a complete component assembly that integrates all prior steps.
+
+### 3.1 Wire the local stream to `WebRTCService`
+
+Before `createOffer` or `handleOffer` can work, the `WebRTCService` must have the local media tracks. Call `setLocalStream` as soon as `getUserMedia` resolves:
+
+```ts
+// In the component, after getUserMedia succeeds:
+const stream = await getLocalStream();
+webrtcService.setLocalStream(stream);
+setLocalStream(stream); // React state — drives the local <video> preview
+```
+
+> [!WARNING]
+> **Forgetting `setLocalStream` is the #1 silent failure.** Without it, `createPeerConnection()` creates an `RTCPeerConnection` with zero tracks. The resulting SDP has no media sections. The call appears to connect (ICE succeeds, `connectionState === "connected"`) but both peers see a black/empty remote video. There is no error message — only the absence of video.
+
+### 3.2 Call initiation — caller/callee asymmetry
+
+WebRTC is asymmetric: exactly **one** peer must create an offer, and the **other** must answer. The signaling server doesn't decide this — the UI does.
+
+The simplest approach for a 1:1 app: once both peers are in the room and the local stream is ready, show a **"Call" button**. The peer who clicks it becomes the caller:
+
+```ts
+const handleCall = async () => {
+  await webrtcService.createOffer();
+};
+```
+
+The callee needs no button — the signaling dispatcher (Step 2.2) already handles incoming offers automatically via `webrtcService.handleOffer()`.
+
+> [!NOTE]
+> **📚 Why Not Auto-Call on Join?**
+>
+> You could trigger `createOffer()` automatically when the second peer joins. This works, but it creates a timing dependency: you must guarantee the local stream is ready *before* the join event arrives. For Phase 3's learning purposes, an explicit "Call" button makes the offer/answer flow visible and debuggable. You can automate it later if desired.
+
+In JSX, add the button to the in-room view:
+
+```tsx
+<button type="button" onClick={handleCall} disabled={!localStream}>
+  Call
+</button>
+```
+
+### 3.3 Render the remote stream & connection state
+
+Register `WebRTCService` callbacks in a `useEffect` to pipe the remote stream to a `<video>` element and track connection state:
 
 ```tsx
 const remoteVideoRef = useRef<HTMLVideoElement>(null);
+const [connectionState, setConnectionState] = useState<RTCPeerConnectionState>();
 
 useEffect(() => {
   webrtcService.onRemoteStream = (stream) => {
@@ -298,15 +361,26 @@ useEffect(() => {
   };
 
   webrtcService.onConnectionStateChange = (state) => {
-    setConnectionState(state); // Local state for UI display
+    setConnectionState(state);
     if (state === "failed") {
-      // A failed connection cannot be reused — must create a new RTCPeerConnection
       handleHangUp();
     }
   };
 }, []);
+```
 
-// In JSX:
+Define the `handleHangUp` function that tears down the call:
+
+```ts
+const handleHangUp = () => {
+  webrtcService.hangUp();
+  // Optionally reset UI state (clear remote video, etc.)
+};
+```
+
+In JSX, render the remote video and connection status:
+
+```tsx
 <video ref={remoteVideoRef} autoPlay playsInline />
 <span>{connectionState}</span>
 ```
@@ -327,6 +401,145 @@ useEffect(() => {
 > In Phase 2, the browser `WebSocket` had a 4-state lifecycle (`CONNECTING → OPEN → CLOSING → CLOSED`). You wrote `intentionallyDisconnected` to distinguish a deliberate close from an unexpected one, and used the `onclose` event to drive reconnection logic.
 >
 > `RTCPeerConnection` has *three* parallel state machines (`signalingState`, `iceConnectionState`, `connectionState`), and the same principle applies: `"disconnected"` is transient and may self-heal, `"failed"` is terminal and requires explicit cleanup. The same pattern of "observe state transitions to drive UI and recovery logic" is the skill — just applied to a more complex object.
+
+### 3.4 Complete component assembly
+
+Here is how Steps 1–4 compose in the call component. This replaces the Phase 2 lobby UI (which was a test harness for signaling) with an actual call-capable view:
+
+```tsx
+// In App.tsx (or a dedicated CallView component)
+import { useEffect, useRef, useState } from "react";
+import { signalingService } from "./services/signaling";
+import { type Envelope, MessageType } from "./types/signaling";
+import { getLocalStream } from "./services/media";
+import { webrtcService } from "./services/webrtc";
+
+function App() {
+  const [inRoom, setInRoom] = useState(false);
+  const [roomId, setRoomId] = useState("");
+  const [token, setToken] = useState("");
+  const [localStream, setLocalStream] = useState<MediaStream>();
+  const [connectionState, setConnectionState] = useState<RTCPeerConnectionState>();
+
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+  // 1. Connect to signaling & route messages to WebRTCService
+  useEffect(() => {
+    signalingService.connect("ws://127.0.0.1:8080/ws");
+
+    const unsubscribe = signalingService.onMessage(async (env: Envelope) => {
+      switch (env.type) {
+        case MessageType.OFFER:
+          await webrtcService.handleOffer(env.payload.sdp, "offer");
+          break;
+        case MessageType.ANSWER:
+          await webrtcService.handleAnswer(env.payload.sdp, "answer");
+          break;
+        case MessageType.ICE:
+          await webrtcService.handleIceCandidate(env.payload);
+          break;
+        case MessageType.LEAVE:
+          setInRoom(false);
+          webrtcService.hangUp();
+          break;
+        case MessageType.JOIN: {
+          setInRoom(true);
+          const payload = env.payload as Record<string, any>;
+          if (payload?.token) setToken(payload.token);
+          break;
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      signalingService.disconnect();
+    };
+  }, []);
+
+  // 2. Register WebRTC callbacks
+  useEffect(() => {
+    webrtcService.onRemoteStream = (stream) => {
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+    };
+    webrtcService.onConnectionStateChange = (state) => {
+      setConnectionState(state);
+      if (state === "failed") handleHangUp();
+    };
+  }, []);
+
+  // 3. Acquire local media when entering a room
+  useEffect(() => {
+    if (!inRoom || localStream) return;
+    getLocalStream().then((stream) => {
+      webrtcService.setLocalStream(stream); // ← Critical: feed tracks to WebRTCService
+      setLocalStream(stream);
+    });
+  }, [inRoom, localStream]);
+
+  // 4. Attach local stream to preview <video>
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  // --- Call control handlers ---
+  const handleCall = async () => {
+    await webrtcService.createOffer();
+  };
+
+  const handleHangUp = () => {
+    webrtcService.hangUp();
+  };
+
+  const handleMicToggle = () => {
+    localStream?.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
+  };
+
+  const handleCameraToggle = () => {
+    localStream?.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
+  };
+
+  // --- JSX (lobby + call view) ---
+  return (
+    <div style={{ padding: "20px" }}>
+      {!inRoom ? (
+        /* Lobby form — same as Phase 2 with roomId + token inputs */
+        <form onSubmit={(e) => { e.preventDefault(); signalingService.joinRoom(roomId, token || undefined); }}>
+          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Room ID" />
+          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Invite token (blank = create)" />
+          <button type="submit">Join / Create</button>
+        </form>
+      ) : (
+        <div>
+          <h2>Room: {roomId}</h2>
+          <p>Invite token: {token}</p>
+          <p>Connection: {connectionState ?? "idle"}</p>
+
+          {/* Video feeds */}
+          <video ref={remoteVideoRef} autoPlay playsInline />
+          <video ref={localVideoRef} autoPlay muted playsInline style={{ transform: "scaleX(-1)" }} />
+
+          {/* Call controls */}
+          <button type="button" onClick={handleCall} disabled={!localStream}>Call</button>
+          <button type="button" onClick={handleMicToggle}>Mic toggle</button>
+          <button type="button" onClick={handleCameraToggle}>Cam toggle</button>
+          <button type="button" onClick={handleHangUp}>Hang up</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+> [!IMPORTANT]
+> **Key integration points to verify:**
+> 1. `webrtcService.setLocalStream(stream)` is called **before** any offer/answer exchange can happen
+> 2. The signaling dispatcher handles all five message types: `offer`, `answer`, `ice`, `leave`, `join`
+> 3. The "Call" button is disabled until `localStream` is available (otherwise `createOffer` produces an empty SDP)
+> 4. `handleHangUp` is defined before it's referenced in `onConnectionStateChange`
 
 ---
 

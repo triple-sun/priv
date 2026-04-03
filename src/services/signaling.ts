@@ -7,6 +7,7 @@ import {
 export class SignalingService {
 	private ws: WebSocket | null = null;
 	private url: string = "";
+
 	private currentRoom: string | null = null;
 	private currentToken: string | null = null;
 	private messageListeners: ((env: Envelope) => void)[] = [];

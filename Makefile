@@ -13,6 +13,9 @@ lint-app:
 	pnpm run check
 	cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
+test-app:
+	npm run test:app
+
 lint-server:
 	cd server && golangci-lint run ./...
 

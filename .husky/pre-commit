@@ -1,5 +1,5 @@
 npx lint-staged --allow-empty
-npm run test:frontend
+npm run test:app
 
 make lint-app
 make lint-server

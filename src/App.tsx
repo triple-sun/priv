@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { signalingService } from "./services/signaling";
 import {
 	type AnyEnvelope,
@@ -17,61 +17,25 @@ function App() {
 	const [roomId, setRoomId] = useState("");
 	const [token, setToken] = useState("");
 	const [inRoom, setInRoom] = useState(false);
+
 	const [messages, setMessages] = useState<AnyEnvelope[]>([]);
 	const [outgoingMsg, setOutgoingMsg] = useState("");
 
-	const videoRef = useRef<HTMLVideoElement>(null);
+	const [connectionState, setConnectionState] =
+		useState<RTCPeerConnectionState>();
+
+	const [localStream, setLocalStream] = useState<MediaStream>();
+
+	const localVideoRef = useRef<HTMLVideoElement>(null);
+	const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
 	const endOfMessagesRef = useRef<HTMLDivElement>(null);
 
 	const address = import.meta.env.VITE_SIGNALING_ADDRESS ?? "localhost";
 	const port = import.meta.env.VITE_SIGNALING_PORT ?? "8080";
 
-	useEffect(() => {
-		// 1. Connect to the WebSocket server on mount.
-		// Replace the URL's port/host with your actual local signaling server details
-		setStatus("connecting");
-
-		const wsUrl = `ws://${address}:${port}/ws`;
-
-		signalingService.connect(wsUrl);
-		setStatus("connected");
-
-		// 2. Attach our listener to capture and log signaling envelopes
-		const unsubscribe = signalingService.onMessage(async (env: Envelope) => {
-			switch (env.type) {
-				case MessageType.OFFER:
-					await webrtcService.handleOffer(env.payload.sdp, "offer");
-					break;
-				case MessageType.ANSWER:
-					await webrtcService.handleAnswer(env.payload.sdp, "answer");
-					break;
-				case MessageType.ICE:
-					await webrtcService.handleIceCandidate(env.payload);
-					break;
-				case MessageType.LEAVE:
-					webrtcService.hangUp();
-					break;
-			}
-		});
-
-		// Clean up websocket listeners upon component unmount
-		return () => {
-			unsubscribe();
-			signalingService.disconnect();
-		};
-	}, []);
-
-	// Auto-scroll messaging widget downwards
-	useEffect(() => {
-		endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
-	}, [messages]);
-
-	useEffect(() => {
-		getLocalStream().then(localStream => {
-			if (videoRef.current && localStream) {
-				videoRef.current.srcObject = localStream;
-			}
-		});
+	const handleHangUp = useCallback(() => {
+		webrtcService.hangUp();
 	}, []);
 
 	const handleJoin = (e: React.SubmitEvent) => {
@@ -103,6 +67,101 @@ function App() {
 		signalingService.send(MessageType.OFFER, { text: outgoingMsg });
 		setOutgoingMsg("");
 	};
+
+	const handleMicToggle = (e: React.MouseEvent) => {
+		e.preventDefault();
+		if (!localStream) return;
+
+		for (const t of localStream.getAudioTracks()) {
+			t.enabled = !t.enabled;
+		}
+	};
+
+	const handleCameraToggle = (e: React.MouseEvent) => {
+		e.preventDefault();
+		if (!localStream) return;
+
+		for (const t of localStream.getVideoTracks()) {
+			t.enabled = !t.enabled;
+		}
+	};
+
+	useEffect(() => {
+		// 1. Connect to the WebSocket server on mount.
+		// Replace the URL's port/host with your actual local signaling server details
+		setStatus("connecting");
+
+		const wsUrl = `ws://${address}:${port}/ws`;
+
+		signalingService.connect(wsUrl);
+		setStatus("connected");
+
+		// 2. Attach our listener to capture and log signaling envelopes
+		const unsubscribe = signalingService.onMessage(async (env: Envelope) => {
+			switch (env.type) {
+				case MessageType.OFFER:
+					await webrtcService.handleOffer(env.payload.sdp, "offer");
+					break;
+				case MessageType.ANSWER:
+					await webrtcService.handleAnswer(env.payload.sdp, "answer");
+					break;
+				case MessageType.ICE:
+					await webrtcService.handleIceCandidate(env.payload);
+					break;
+				case MessageType.LEAVE:
+					setInRoom(false);
+					webrtcService.hangUp();
+					break;
+				case MessageType.JOIN: {
+					setInRoom(true);
+					const payload = env.payload as Record<string, unknown>;
+					if (payload?.token) setToken(payload.token as string);
+				}
+			}
+
+			setMessages(prev => [...prev, env]);
+		});
+
+		// Clean up websocket listeners upon component unmount
+		return () => {
+			unsubscribe();
+			signalingService.disconnect();
+		};
+	}, [setStatus, address, port]);
+
+	useEffect(() => {
+		webrtcService.onRemoteStream = stream => {
+			if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+		};
+
+		webrtcService.onConnectionStateChange = state => {
+			setConnectionState(state); // Local state for UI display
+			if (state === "failed") handleHangUp();
+		};
+	}, [handleHangUp]);
+
+	// Auto-scroll messaging widget downwards
+	useEffect(() => {
+		endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
+	}, [messages]);
+
+	useEffect(() => {
+		if (!inRoom) return;
+
+		if (!localStream) {
+			getLocalStream().then(localStream => {
+				setLocalStream(localStream);
+			});
+		}
+
+		if (
+			localStream &&
+			localVideoRef.current &&
+			localVideoRef.current.srcObject !== localStream
+		) {
+			localVideoRef.current.srcObject = localStream;
+		}
+	}, [localStream, inRoom]);
 
 	return (
 		<div
@@ -242,13 +301,38 @@ function App() {
 						</button>
 					</form>
 					<div>
+						{/** biome-ignore lint/a11y/useMediaCaption: <dev> */}
+						<video ref={remoteVideoRef} autoPlay playsInline />
+						<span>{connectionState}</span>
 						<video
-							ref={videoRef}
+							ref={localVideoRef}
 							autoPlay
 							muted
 							playsInline
 							style={{ transform: "scaleX(-1)" }}
 						/>
+						<button
+							type='button'
+							style={{ padding: "1px 3px" }}
+							onClick={handleMicToggle}
+						>
+							Mic toggle
+						</button>
+						<button
+							type='button'
+							style={{ padding: "1px 3px" }}
+							onClick={handleCameraToggle}
+						>
+							Cam toggle
+						</button>
+
+						<button
+							type='button'
+							style={{ padding: "1px 3px" }}
+							onClick={handleHangUp}
+						>
+							hang up
+						</button>
 					</div>
 				</div>
 			)}

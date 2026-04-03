@@ -4,6 +4,9 @@ description: How to approach and implement ANY task or feature request in this p
 
 # Feature Implementation Workflow
 
+> [!IMPORTANT]
+> **Before you write any code or snippets**, check which mode applies: see `instructions.md` → **Plan-Writing Mode vs. Implementation Mode**. If you are producing a plan or spec document (e.g., editing `.plan/PHASE_N.md`), you must follow Plan-Writing Mode rules — no complete code snippets.
+
 Follow this strict workflow when implementing any task, feature, or phase of the project:
 
 ## Phase 0: Teach First
