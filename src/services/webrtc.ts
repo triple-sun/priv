@@ -8,7 +8,7 @@ const ICE_SERVERS = [
 ];
 
 export class WebRTCService {
-	private pc: RTCPeerConnection | null = null;
+	private peerConnection: RTCPeerConnection | null = null;
 	private localStream: MediaStream | null = null;
 
 	public onRemoteStream: ((stream: MediaStream) => void) | null = null;
@@ -22,44 +22,45 @@ export class WebRTCService {
 	}
 
 	private createPeerConnection(): RTCPeerConnection {
-		const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+		const peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
 		// Trickle ICE: send candidates as they're discovered
-		pc.onicecandidate = ({ candidate }) => {
+		peerConnection.onicecandidate = ({ candidate }) => {
 			if (candidate) {
 				signalingService.send(MessageType.ICE, candidate.toJSON());
 			}
 		};
 
 		// Deliver the remote stream to the UI
-		pc.ontrack = ({ streams }) => {
+		peerConnection.ontrack = ({ streams }) => {
 			if (streams[0] && this.onRemoteStream) {
 				this.onRemoteStream(streams[0]);
 			}
 		};
 
-		pc.onconnectionstatechange = () => {
+		peerConnection.onconnectionstatechange = () => {
 			if (this.onConnectionStateChange) {
-				this.onConnectionStateChange(pc.connectionState);
+				this.onConnectionStateChange(peerConnection.connectionState);
 			}
 		};
 
-		if (!this.localStream) return pc;
+		if (!this.localStream) return peerConnection;
 
 		// Add local tracks BEFORE creating an offer
 		// (the SDP must contain media sections for the tracks to be negotiated)
 		for (const track of this.localStream.getTracks()) {
-			pc.addTrack(track, this.localStream);
+			peerConnection.addTrack(track, this.localStream);
 		}
 
-		return pc;
+		return peerConnection;
 	}
 
 	/** Caller side: create and send an offer */
 	public async createOffer(): Promise<void> {
-		this.pc = this.createPeerConnection();
-		const offer = await this.pc.createOffer();
-		await this.pc.setLocalDescription(offer);
+		this.peerConnection = this.createPeerConnection();
+		const offer = await this.peerConnection.createOffer();
+		await this.peerConnection.setLocalDescription(offer);
+
 		signalingService.send(MessageType.OFFER, {
 			sdp: offer.sdp,
 			type: offer.type
@@ -68,13 +69,13 @@ export class WebRTCService {
 
 	/** Callee side: receive offer, create and send answer */
 	public async handleOffer(sdp: string, type: RTCSdpType): Promise<void> {
-		this.pc = this.createPeerConnection();
+		this.peerConnection = this.createPeerConnection();
 
-		await this.pc.setRemoteDescription({ sdp, type });
+		await this.peerConnection.setRemoteDescription({ sdp, type });
 
-		const answer = await this.pc.createAnswer();
+		const answer = await this.peerConnection.createAnswer();
 
-		await this.pc.setLocalDescription(answer);
+		await this.peerConnection.setLocalDescription(answer);
 
 		signalingService.send(MessageType.ANSWER, {
 			sdp: answer.sdp,
@@ -84,14 +85,14 @@ export class WebRTCService {
 
 	/** Both sides: apply the answer when received */
 	public async handleAnswer(sdp: string, type: RTCSdpType): Promise<void> {
-		await this.pc?.setRemoteDescription({ sdp, type });
+		await this.peerConnection?.setRemoteDescription({ sdp, type });
 	}
 
 	/** Both sides: apply ICE candidates as they arrive */
 	public async handleIceCandidate(
 		candidate: RTCIceCandidateInit
 	): Promise<void> {
-		await this.pc?.addIceCandidate(candidate);
+		await this.peerConnection?.addIceCandidate(candidate);
 	}
 
 	/** Hang up and clean up */
@@ -100,11 +101,11 @@ export class WebRTCService {
 			track.stop();
 		}
 
-		this.pc?.close();
-		this.pc = null;
+		this.peerConnection?.close();
+		this.peerConnection = null;
 		this.localStream = null;
 
-		signalingService.send(MessageType.LEAVE, {});
+		signalingService.disconnect();
 	}
 }
 

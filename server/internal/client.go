@@ -15,6 +15,7 @@ const ( // Time allowed to read the next pong message from the peer.
 )
 
 type Client struct {
+	Name string
 	Conn *websocket.Conn
 	Send chan []byte
 }
@@ -27,6 +28,7 @@ func (c *Client) ReadPump(hub *Hub) {
 
 	// Configure the heartbeat deadlines
 	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	
 	c.Conn.SetPongHandler(func(string) error {
 		_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
@@ -47,6 +49,7 @@ func (c *Client) ReadPump(hub *Hub) {
 // WritePump pushes queued messages from the Send channel onto the WebSocket.
 func (c *Client) WritePump() {
     ticker := time.NewTicker(pingPeriod)
+
     defer func() {
         ticker.Stop()
         c.Conn.Close()

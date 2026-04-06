@@ -182,69 +182,134 @@ priv_chat/
 > This is the project's unique selling point. Verify thoroughly on each target OS.
 
 ### Learning Objectives
+- Discover Tauri v2's built-in `setContentProtected` API and understand what it wraps on each OS
 - Understand Rust's `unsafe` block as a deliberate escape hatch from the ownership model — and why every `unsafe` requires a `// SAFETY:` comment
 - Learn how the Tauri command bridge (`#[tauri::command]`) crosses the JS↔Rust boundary
 - Understand OS-level windowing APIs: `SetWindowDisplayAffinity` (Win32) and `NSWindow.sharingType` (AppKit)
 - Practice platform-conditional compilation with `#[cfg(target_os = "windows")]`
 
 ### Key Concepts
+- **Tauri `setContentProtected`**: Tauri v2 provides a cross-platform API (`window.setContentProtected(true)` in JS, `.content_protected(true)` in Rust) that internally calls the OS-native protection. This is the **primary approach** — use it first, then consider manual FFI only if you need stronger control (e.g., `WDA_EXCLUDEFROMCAPTURE` vs. `WDA_MONITOR`)
 - **`unsafe` in Rust**: calling FFI (foreign function interface) C/ObjC APIs bypasses Rust's safety checks — you become responsible for upholding the invariants manually
 - **`windows-rs` / `objc2`**: Rust crates that provide safe(r) wrappers around Win32 and Objective-C runtime APIs
 - **`#[cfg(target_os)]`**: compile-time platform branching — the code for Windows literally does not exist in the macOS binary
 
 ### Steps
 
-1. **Windows: `SetWindowDisplayAffinity`**
-   - Add `windows-rs` crate dependency (feature-gate: `Win32_UI_WindowsAndMessaging`).
-   - Write a Tauri command:
+1. **Cross-platform: Tauri built-in `setContentProtected` (primary approach)**
+   - **Capability permission**: Add `core:window:allow-set-content-protected` to `src-tauri/capabilities/default.json`:
+     ```json
+     {
+       "permissions": ["core:default", "opener:default", "core:window:allow-set-content-protected"]
+     }
+     ```
+   - **Frontend call**: Use the Tauri JS API to enable protection at runtime:
+     ```ts
+     import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+     const appWindow = getCurrentWebviewWindow();
+     await appWindow.setContentProtected(true);
+     ```
+   - **Alternative — Rust side at window build time**: Set protection in `lib.rs` or via `tauri.conf.json` window config. However, the JS runtime approach is preferred because it allows toggling protection on/off and reporting the result to the UI.
+   - Internally, Tauri calls `SetWindowDisplayAffinity(WDA_MONITOR)` on Windows and `NSWindow.sharingType = .none` on macOS.
+
+2. **Windows upgrade: `WDA_EXCLUDEFROMCAPTURE` (optional FFI for stronger protection)**
+   - Tauri's built-in API uses `WDA_MONITOR` which shows a black window in captures. `WDA_EXCLUDEFROMCAPTURE` (Windows 10 2004+) goes further: the window is **completely absent** from captures.
+   - If the stronger behavior is desired, add a Tauri command using manual FFI:
+   - **`Cargo.toml` — platform-conditional dependency**:
+     ```toml
+     [target.'cfg(target_os = "windows")'.dependencies]
+     windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+     ```
+   - **Tauri command**:
      ```rust
      #[tauri::command]
      fn enable_anti_capture(window: tauri::Window) -> Result<(), String> {
          #[cfg(target_os = "windows")]
          {
              use windows::Win32::UI::WindowsAndMessaging::*;
+             use windows::Win32::Foundation::HWND;
              let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+             // SAFETY: hwnd is a valid window handle obtained from Tauri.
+             // SetWindowDisplayAffinity is safe to call with a valid HWND and a defined affinity constant.
              unsafe {
-                 SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+                 SetWindowDisplayAffinity(HWND(hwnd.0), WDA_EXCLUDEFROMCAPTURE)
                      .map_err(|e| e.to_string())?;
              }
          }
          Ok(())
      }
      ```
-   - Register the command and invoke it from the frontend on app startup.
+   - Register the command in `tauri::Builder` and invoke from JS after `setContentProtected` as an upgrade attempt.
 
-2. **macOS: `NSWindow.sharingType`**
-   - Add the `objc2` and `objc2-app-kit` crates.
-   - Write a Tauri command that gets the `NSWindow` handle and sets `sharingType = .none`:
+3. **macOS: verify `setContentProtected` behavior**
+   - Tauri's `setContentProtected(true)` internally sets `NSWindow.sharingType = .none`, which requires macOS 12.0+.
+   - **No manual FFI is needed** unless custom behavior beyond `.none` is required. If manual access is ever needed, the `NSWindow` pointer is obtained via:
      ```rust
      #[cfg(target_os = "macos")]
      {
          use objc2_app_kit::NSWindowSharingType;
-         // Get NSWindow from Tauri window handle
-         // Set sharing_type to NSWindowSharingTypeNone
+         // window.ns_window() returns a raw *mut c_void pointer to the NSWindow
+         let ns_window = window.ns_window().map_err(|e| e.to_string())?;
+         // Cast and call setSharingType: via objc2 runtime
      }
      ```
-   - Requires macOS 12.0+. Add a runtime version check and degrade gracefully on older versions.
+   - **`Cargo.toml` — platform-conditional dependency** (only needed if manual FFI route is taken):
+     ```toml
+     [target.'cfg(target_os = "macos")'.dependencies]
+     objc2 = "0.5"
+     objc2-app-kit = { version = "0.2", features = ["NSWindow"] }
+     objc2-foundation = "0.2"
+     ```
+   - **Graceful degradation on macOS < 12.0**: The JS call `setContentProtected(true)` will silently succeed but have no effect. Detect this condition and show a persistent warning banner (see Step 5).
 
-3. **Linux: Best-effort**
-   - No reliable equivalent on X11. On Wayland, investigate compositor-level restrictions.
-   - For now: detect the display server, show a warning banner on X11 ("Screen capture protection unavailable on X11").
+4. **Linux: warning-only for MVP**
+   - **X11**: No OS-level capture protection exists. `setContentProtected` has no effect.
+   - **Wayland**: Compositor-level exclusion (`zwlr_screencopy_manager_v1`) exists on some compositors (Sway, KDE 6+) but is not exposed by Tauri. Defer to Phase 7 or a future enhancement.
+   - **MVP scope**: Detect the display server and show a persistent warning banner: "Screen capture protection is unavailable on Linux. Your call is still end-to-end encrypted."
+   - **Watermarking** (semi-transparent per-user overlay) is deferred to Phase 7, Step 2 as a Linux fallback deterrent.
 
-4. **Frontend integration**
-   - Call `enable_anti_capture` on `DOMContentLoaded` or when entering a call.
-   - Show a shield icon in the UI when protection is active.
+5. **Frontend integration & degradation UX**
+   - Call `setContentProtected(true)` when entering a call (not on `DOMContentLoaded` — protection is only needed during active calls).
+   - Call `setContentProtected(false)` when the call ends (allows normal screenshots of the lobby UI).
+   - **Shield icon states**:
+     - 🛡️ Green shield: protection active (Windows/macOS confirmed).
+     - ⚠️ Yellow shield: protection unavailable (Linux, or macOS < 12.0). Shows a persistent banner explaining why.
+     - The shield icon is always visible during a call — do not hide it.
+   - If the optional `WDA_EXCLUDEFROMCAPTURE` upgrade (Step 2) fails, fall back to the built-in `WDA_MONITOR` result without user-facing error.
 
-5. **Optional: detect recording software**
+6. **Optional: detect recording software**
    - Tauri command that scans running processes for known recorders (OBS, Bandicam, etc.).
    - Show a warning if detected. This is easily bypassed — treat as a soft deterrent only.
+
+### File Summary
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `src-tauri/capabilities/default.json` | **MODIFY** | Add `core:window:allow-set-content-protected` permission |
+| `src-tauri/Cargo.toml` | **MODIFY** | Add platform-conditional deps (`windows`, optionally `objc2`) |
+| `src-tauri/src/lib.rs` | **MODIFY** | Add `enable_anti_capture` command (Windows FFI upgrade), register in builder |
+| `src/services/anti-capture.ts` (or similar) | **NEW** | Wrapper calling `setContentProtected` + optional `invoke("enable_anti_capture")` |
+| Call component (e.g., `src/App.tsx`) | **MODIFY** | Wire anti-capture on call start/end, render shield icon + platform warning |
+
+### Common Blockers
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| `setContentProtected` call throws permission error | Missing capability permission | Add `core:window:allow-set-content-protected` to `capabilities/default.json` |
+| OBS still captures window on Windows | Using `WDA_MONITOR` (Tauri default) which shows black — but some tools bypass it | Upgrade to `WDA_EXCLUDEFROMCAPTURE` via manual FFI (Step 2) |
+| `window.hwnd()` or `window.ns_window()` not found | Wrong Tauri import or version | Ensure `tauri = "2"` and using `tauri::Window` from `#[tauri::command]` parameter |
+| macOS screenshot still captures content | macOS < 12.0, or `sharingType` not supported by the window type | Add version detection; show warning banner |
+| `windows` crate feature compilation error | Missing feature gate in `Cargo.toml` | Ensure `features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"]` |
 
 ### Verification
 - [ ] **Windows**: Open OBS → add "Window Capture" or "Display Capture" → the app window is black or absent.
 - [ ] **Windows**: `Win+Shift+S` (Snipping Tool) cannot capture the window content.
 - [ ] **macOS**: `Cmd+Shift+5` screenshot/recording shows a black/blank area where the app is.
 - [ ] **macOS**: QuickTime screen recording omits the window.
-- [ ] **Linux**: Warning banner is displayed on X11 sessions.
+- [ ] **Linux**: Warning banner is displayed on X11/Wayland sessions during a call.
+- [ ] **All platforms**: Shield icon shows correct state (green on Win/Mac, yellow on Linux).
+- [ ] **All platforms**: Protection toggles off when call ends (lobby screenshots work normally).
 
 ### Estimated time: 3–4 days
 

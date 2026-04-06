@@ -35,6 +35,7 @@ func handleConnection(w http.ResponseWriter, r *http.Request, hub *internal.Hub)
 
 func main() {
 	port := flag.String("port", "8080", "Port for websocket connection")
+	
 	flag.Parse()
 
 	hub := internal.NewHub()

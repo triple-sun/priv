@@ -15,21 +15,21 @@ type Room struct {
 }
 
 type Hub struct {
-	Mu    sync.RWMutex
-	Rooms map[string]*Room
+	mu    sync.RWMutex
+	rooms map[string]*Room
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		Rooms: make(map[string]*Room),
+		rooms: make(map[string]*Room),
 	}
 }
 
 func (h *Hub) handleForward(c *Client, env *Envelope) {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
-	room, exists := h.Rooms[env.Room]
+	room, exists := h.rooms[env.Room]
 	if !exists {
 		h.sendError(c, "room does not exist")
 		return
@@ -104,10 +104,10 @@ func (h *Hub) sendError(c *Client, errMsg string) {
 }
 
 func (h *Hub) handleJoin(c *Client, env *Envelope) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-	room, exists := h.Rooms[env.Room]
+	room, exists := h.rooms[env.Room]
 	var created bool
 	if !exists {
 		token, err := generateToken()
@@ -121,7 +121,7 @@ func (h *Hub) handleJoin(c *Client, env *Envelope) {
 			Clients: make(map[*Client]struct{}),
 		}
 
-		h.Rooms[env.Room] = room
+		h.rooms[env.Room] = room
 		created = true
 	} else {
 		// Room exists: Authenticate
@@ -173,18 +173,18 @@ func (h *Hub) handleJoin(c *Client, env *Envelope) {
 }
 
 func (h *Hub) RemoveClient(c *Client) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	// Find which room the client was in
-	for roomID, room := range h.Rooms {
+	for roomID, room := range h.rooms {
 		if _, ok := room.Clients[c]; ok {
 			delete(room.Clients, c)
 			close(c.Send)
 
 			if len(room.Clients) == 0 {
 				// Room is empty, delete it to prevent memory leaks
-				delete(h.Rooms, roomID)
+				delete(h.rooms, roomID)
 			} else {
 				// Notify the remaining peer that this user left
 				leaveEnv := Envelope{Version: 1, Type: TypeLeave, Room: roomID}

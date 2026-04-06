@@ -6,6 +6,7 @@ import {
 	MessageType
 } from "./types/signaling";
 import "./App.css";
+import { enableCaptureProtection } from "./services/anti-capture";
 import { getLocalStream } from "./services/media";
 import { webrtcService } from "./services/webrtc";
 
@@ -51,12 +52,6 @@ function App() {
 		setInRoom(false);
 		setStatus("disconnected");
 		setToken("");
-
-		// Auto-reconnect purely for rapid testing in this lobby
-		setTimeout(() => {
-			signalingService.connect(`ws://${address}:${port}/ws`);
-			setStatus("connected");
-		}, 500);
 	};
 
 	const handleSendMessage = (e: React.SubmitEvent) => {
@@ -120,6 +115,10 @@ function App() {
 			}
 
 			setMessages(prev => [...prev, env]);
+
+			enableCaptureProtection().then(status => {
+				console.log("[AntiCapture] Protection status:", status);
+			});
 		});
 
 		// Clean up websocket listeners upon component unmount
@@ -304,13 +303,15 @@ function App() {
 						{/** biome-ignore lint/a11y/useMediaCaption: <dev> */}
 						<video ref={remoteVideoRef} autoPlay playsInline />
 						<span>{connectionState}</span>
+						<br />
 						<video
 							ref={localVideoRef}
 							autoPlay
 							muted
 							playsInline
-							style={{ transform: "scaleX(-1)" }}
+							style={{ transform: "scaleX(-1)", maxWidth: 320, maxHeight: 240 }}
 						/>
+						<br />
 						<button
 							type='button'
 							style={{ padding: "1px 3px" }}

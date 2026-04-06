@@ -8,7 +8,7 @@ export enum MessageType {
 	ERROR = "error"
 }
 
-interface EnvelopeBase {
+export interface AnyEnvelope {
 	v: number;
 	type: MessageType;
 	room: string;
@@ -16,21 +16,21 @@ interface EnvelopeBase {
 	payload?: unknown;
 }
 
-export interface RTCICEEnvelope extends EnvelopeBase {
+export interface RTCICEEnvelope extends AnyEnvelope {
 	type: MessageType.ICE;
 	payload: RTCIceCandidateInit;
 }
 
-export interface RTCSDPEnvelope extends EnvelopeBase {
+export interface RTCSDPEnvelope extends AnyEnvelope {
 	type: MessageType.OFFER | MessageType.ANSWER;
 	payload: Required<RTCSessionDescriptionInit>;
 }
 
-export interface RTCLeaveEnvelope extends EnvelopeBase {
+export interface RTCLeaveEnvelope extends AnyEnvelope {
 	type: MessageType.LEAVE;
 }
 
-export interface GenericEnvelope extends EnvelopeBase {
+export interface GenericEnvelope extends AnyEnvelope {
 	type: MessageType.JOIN | MessageType.PUB_KEY | MessageType.ERROR;
 }
 
@@ -39,5 +39,3 @@ export type Envelope =
 	| RTCSDPEnvelope
 	| RTCLeaveEnvelope
 	| GenericEnvelope;
-
-export type AnyEnvelope = EnvelopeBase;

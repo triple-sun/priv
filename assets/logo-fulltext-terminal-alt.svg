@@ -15,20 +15,5 @@
       <stop offset="100%" stop-color="#ef9393"/>
     </linearGradient>
   </defs>
-
-  <!-- Gradient circle background -->
-  <rect x="0" y="0" width="200" height="200" rx="28" fill="url(#bgGradient)"/>
-
-  <!-- White ))) text, centered -->
-  <!-- White > priv))) text, bottom-left offset -->
-  <text
-    x="100"
-    y="290"
-    text-anchor="middle"
-    font-family="'Roboto', sans-serif"
-    font-weight="700"
-    font-size="48"
-    fill="#2d3748"
-    letter-spacing="0"
-  >> priv)))</text>
+  <text x="100" y="105" text-anchor="middle" dominant-baseline="central" font-family="'Roboto', sans-serif" font-weight="700" font-size="42" fill="#2d3748" letter-spacing="-1"><tspan fill="url(#bgGradient)">> </tspan>priv<tspan fill="url(#bgGradient)" font-family="'Roboto', serif" letter-spacing="6">)))</tspan></text>
 </svg>
